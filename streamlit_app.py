@@ -6,6 +6,14 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
+import mlflow
+import mlflow.sklearn
+from datetime import datetime
+import os
+
+# Configure MLflow
+mlflow.set_tracking_uri("file:./mlruns")
+mlflow.set_experiment("histgradient-boosting-production")
 
 # Set page config
 st.set_page_config(
@@ -65,6 +73,8 @@ if 'data' in st.session_state:
 st.header("2. Model Training")
 if st.button("Train Model") and 'X' in st.session_state:
     with st.spinner("Training model..."):
+                    # Start MLflow run for experiment tracking
+            with mlflow.start_run(run_name=f"hgb_prod_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
             st.session_state['X'],
@@ -81,6 +91,15 @@ if st.button("Train Model") and 'X' in st.session_state:
             min_samples_leaf=min_samples_leaf,
             random_state=42
         )
+
+                # Log parameters to MLflow
+                mlflow.log_params({
+                    "max_iter": max_iter,
+                    "learning_rate": learning_rate,
+                    "max_depth": max_depth,
+                    "min_samples_leaf": min_samples_leaf,
+                    "random_state": 42
+                })
         
         model.fit(X_train, y_train)
         
@@ -101,6 +120,23 @@ if 'model' in st.session_state:
     
     # Calculate metrics
     accuracy = accuracy_score(st.session_state['y_test'], st.session_state['y_pred'])
+
+                # Calculate additional metrics
+                from sklearn.metrics import precision_score, recall_score, f1_score
+                precision = precision_score(st.session_state['y_test'], st.session_state['y_pred'], average='weighted')
+                recall = recall_score(st.session_state['y_test'], st.session_state['y_pred'], average='weighted')
+                f1 = f1_score(st.session_state['y_test'], st.session_state['y_pred'], average='weighted')
+                
+                # Log metrics to MLflow
+                mlflow.log_metrics({
+                    "accuracy": accuracy,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1_score": f1
+                })
+                
+                # Log the trained model
+                mlflow.sklearn.log_model(model, "model", registered_model_name="HistGradientBoostingModel")
     
     # Display metrics
     col1, col2, col3 = st.columns(3)
@@ -221,6 +257,68 @@ with st.expander("Click to see example anomalous scenarios"):
     
     **Unusual Execution Pattern:**
     - Execution Time: 200
-    - Number of Instructions: 10000
+    - Nu
+    
+    # MLOps - Experiment History Dashboard
+st.markdown("---")
+st.header("4. MLOps - Experiment Tracking")
+
+try:
+    import mlflow
+    from mlflow.tracking import MlflowClient
+    
+    client = MlflowClient()
+    experiment = client.get_experiment_by_name("histgradient-boosting-production")
+    
+    if experiment:
+        # Get all runs from the experiment
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            order_by=["start_time DESC"],
+            max_results=10
+        )
+        
+        if runs:
+            st.subheader("📊 Recent Experiment Runs")
+            
+            # Create a dataframe of runs
+            import pandas as pd
+            runs_data = []
+            for run in runs:
+                runs_data.append({
+                    "Run ID": run.info.run_id[:8],
+                    "Start Time": pd.to_datetime(run.info.start_time, unit='ms').strftime('%Y-%m-%d %H:%M:%S'),
+                    "Accuracy": run.data.metrics.get('accuracy', 'N/A'),
+                    "Precision": run.data.metrics.get('precision', 'N/A'),
+                    "Recall": run.data.metrics.get('recall', 'N/A'),
+                    "F1 Score": run.data.metrics.get('f1_score', 'N/A'),
+                    "Max Iter": run.data.params.get('max_iter', 'N/A'),
+                    "Learning Rate": run.data.params.get('learning_rate', 'N/A')
+                })
+            
+            df_runs = pd.DataFrame(runs_data)
+            st.dataframe(df_runs, use_container_width=True)
+            
+            # Show best run
+            if len(runs) > 0:
+                best_run = max(runs, key=lambda r: r.data.metrics.get('accuracy', 0))
+                st.success(f"🏆 Best Run: {best_run.info.run_id[:8]} with Accuracy: {best_run.data.metrics.get('accuracy', 0):.4f}")
+            
+            # Metrics comparison chart
+            st.subheader("📈 Metrics Comparison Across Runs")
+            metrics_df = pd.DataFrame([
+                {"Run": i+1, "Accuracy": run.data.metrics.get('accuracy', 0), 
+                 "Precision": run.data.metrics.get('precision', 0),
+                 "Recall": run.data.metrics.get('recall', 0),
+                 "F1 Score": run.data.metrics.get('f1_score', 0)}
+                for i, run in enumerate(runs)
+            ])
+            st.line_chart(metrics_df.set_index('Run'))
+        else:
+            st.info("No experiment runs found yet. Train a model to see experiment history.")
+    else:
+        st.info("Experiment not found. Train a model to create the first experiment run.")
+except Exception as e:
+    st.warning(f"MLflow tracking not available: {str(e)}")mber of Instructions: 10000
     - Energy Efficiency: 0.1
     """)
